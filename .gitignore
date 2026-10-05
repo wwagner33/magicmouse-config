@@ -1,2 +1,33 @@
+# Python
 __pycache__/
-*.pyc
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+
+# Empacotamento
+build/
+dist/
+*.rpm
+*.tar.gz
+
+# Editores e IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.#*
+
+# Sistema
+.DS_Store
+Thumbs.db
+.directory
+
+# Arquivos temporários e logs
+*.log
+*.tmp
+*.bak

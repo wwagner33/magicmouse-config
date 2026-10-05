@@ -1,4 +1,6 @@
 #!/bin/bash
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Wellington Wagner Ferreira Sarmento
 # Auxiliar privilegiado do Configurador do Magic Mouse (executado via pkexec).
 # Uso: magicmouse-helper <emulate_3button> <emulate_scroll_wheel> <scroll_speed> <scroll_acceleration> <persistir>
 #   booleanos: 0 ou 1; scroll_speed: 0 a 63

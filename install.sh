@@ -1,4 +1,6 @@
 #!/bin/bash
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Wellington Wagner Ferreira Sarmento
 # Instala a parte privilegiada do Configurador do Magic Mouse.
 # Uso: sudo ./install.sh
 set -euo pipefail

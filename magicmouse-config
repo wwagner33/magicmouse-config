@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Wellington Wagner Ferreira Sarmento
 """Configurador gráfico do Apple Magic Mouse para XFCE (GTK3)."""
 import glob
 import os

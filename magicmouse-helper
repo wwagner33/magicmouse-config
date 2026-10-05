@@ -1,0 +1,35 @@
+#!/bin/bash
+# Auxiliar privilegiado do Configurador do Magic Mouse (executado via pkexec).
+# Uso: magicmouse-helper <emulate_3button> <emulate_scroll_wheel> <scroll_speed> <scroll_acceleration> <persistir>
+#   booleanos: 0 ou 1; scroll_speed: 0 a 63
+set -euo pipefail
+
+PARAMS=/sys/module/hid_magicmouse/parameters
+CONF=/etc/modprobe.d/magicmouse.conf
+
+fail() { echo "$1" >&2; exit 2; }
+
+[[ $# -eq 5 ]] || fail "Número de argumentos inválido."
+for v in "$1" "$2" "$4" "$5"; do
+    [[ $v == 0 || $v == 1 ]] || fail "Valor booleano inválido: $v"
+done
+[[ $3 =~ ^[0-9]{1,2}$ ]] && (( 10#$3 <= 63 )) || fail "Velocidade inválida: $3"
+
+e3b=$1 esw=$2 speed=$((10#$3)) accel=$4 persist=$5
+
+# Aplica imediatamente no driver carregado (sem precisar recarregar o módulo)
+if [[ -d $PARAMS ]]; then
+    echo "$e3b"   > "$PARAMS/emulate_3button"
+    echo "$esw"   > "$PARAMS/emulate_scroll_wheel"
+    echo "$speed" > "$PARAMS/scroll_speed"
+    echo "$accel" > "$PARAMS/scroll_acceleration"
+fi
+
+if [[ $persist == 1 ]]; then
+    cat > "$CONF" <<EOF
+# Gerado pelo Configurador do Magic Mouse
+options hid_magicmouse emulate_3button=$e3b emulate_scroll_wheel=$esw scroll_speed=$speed scroll_acceleration=$accel
+EOF
+else
+    rm -f "$CONF"
+fi

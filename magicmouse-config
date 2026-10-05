@@ -1,0 +1,280 @@
+#!/usr/bin/env python3
+"""Configurador gráfico do Apple Magic Mouse para XFCE (GTK3)."""
+import glob
+import os
+import re
+import subprocess
+import threading
+
+import gi
+
+gi.require_version("Gtk", "3.0")
+from gi.repository import GLib, Gtk  # noqa: E402
+
+PARAMS = "/sys/module/hid_magicmouse/parameters"
+HELPER = "/usr/local/libexec/magicmouse-helper"
+CONF = "/etc/modprobe.d/magicmouse.conf"
+DEFAULTS = {
+    "emulate_scroll_wheel": True,
+    "emulate_3button": True,
+    "scroll_acceleration": False,
+    "scroll_speed": 32,
+}
+MAC_RE = re.compile(r"^([0-9a-f]{2}:){5}[0-9a-f]{2}$", re.I)
+
+
+def read_file(path):
+    try:
+        with open(path) as f:
+            return f.read().strip()
+    except OSError:
+        return None
+
+
+def read_params():
+    """Lê os parâmetros atuais do driver; None se o módulo não estiver carregado."""
+    if not os.path.isdir(PARAMS):
+        return None
+    vals = {}
+    for key, default in DEFAULTS.items():
+        raw = read_file(f"{PARAMS}/{key}")
+        if isinstance(default, bool):
+            vals[key] = raw == "Y" if raw is not None else default
+        else:
+            vals[key] = int(raw) if raw and raw.isdigit() else default
+    return vals
+
+
+def find_mice():
+    """Retorna [(nome, mac)] dos Magic Mouse conectados por Bluetooth."""
+    mice = {}
+    for dev in glob.glob("/sys/bus/hid/drivers/magicmouse/*:*"):
+        for uniq_path in glob.glob(f"{dev}/input/input*/uniq"):
+            mac = read_file(uniq_path) or ""
+            if MAC_RE.match(mac):
+                name = read_file(os.path.join(os.path.dirname(uniq_path), "name"))
+                mice[mac.upper()] = name or "Magic Mouse"
+    return [(name, mac) for mac, name in mice.items()]
+
+
+def battery(mac):
+    for path in glob.glob(f"/sys/class/power_supply/hid-{mac.lower()}-battery*/capacity"):
+        val = read_file(path)
+        if val and val.isdigit():
+            return int(val)
+    return None
+
+
+def run_async(cmd, on_done):
+    """Executa um comando numa thread e chama on_done(returncode, saída) na thread da UI."""
+    def worker():
+        try:
+            p = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+            rc, out = p.returncode, (p.stderr or p.stdout).strip()
+        except (OSError, subprocess.TimeoutExpired) as e:
+            rc, out = -1, str(e)
+        GLib.idle_add(on_done, rc, out)
+    threading.Thread(target=worker, daemon=True).start()
+
+
+class MagicMouseWindow(Gtk.Window):
+    def __init__(self):
+        super().__init__(title="Magic Mouse")
+        self.set_default_size(460, -1)
+        self.set_border_width(16)
+        self.set_icon_name("input-mouse")
+
+        header = Gtk.HeaderBar(title="Magic Mouse", subtitle="Configurações do mouse Apple")
+        header.set_show_close_button(True)
+        self.set_titlebar(header)
+
+        root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=14)
+        self.add(root)
+
+        # --- Status do dispositivo ---
+        status_frame = Gtk.Frame(label=" Dispositivo ")
+        status_box = Gtk.Box(spacing=12, margin=12)
+        status_frame.add(status_box)
+        status_box.pack_start(Gtk.Image.new_from_icon_name("input-mouse", Gtk.IconSize.DIALOG), False, False, 0)
+        info = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        self.lbl_device = Gtk.Label(xalign=0)
+        self.lbl_battery = Gtk.Label(xalign=0)
+        self.battery_bar = Gtk.LevelBar(min_value=0, max_value=100)
+        info.pack_start(self.lbl_device, False, False, 0)
+        info.pack_start(self.lbl_battery, False, False, 0)
+        info.pack_start(self.battery_bar, False, False, 0)
+        status_box.pack_start(info, True, True, 0)
+        self.btn_reconnect = Gtk.Button(label="Reconectar")
+        self.btn_reconnect.set_tooltip_text(
+            "Desconecta e reconecta via Bluetooth.\n"
+            "Use se a rolagem parar de funcionar (ex.: após carregar no cabo).")
+        self.btn_reconnect.set_valign(Gtk.Align.CENTER)
+        self.btn_reconnect.connect("clicked", self.on_reconnect)
+        status_box.pack_end(self.btn_reconnect, False, False, 0)
+        root.pack_start(status_frame, False, False, 0)
+
+        # --- Configurações ---
+        cfg_frame = Gtk.Frame(label=" Rolagem e botões ")
+        grid = Gtk.Grid(column_spacing=12, row_spacing=12, margin=12)
+        cfg_frame.add(grid)
+
+        self.sw_scroll = self._switch_row(grid, 0, "Rolagem por toque",
+                                          "Deslize o dedo na superfície para rolar")
+        self.sw_accel = self._switch_row(grid, 1, "Aceleração da rolagem",
+                                         "Gestos rápidos e seguidos rolam mais longe")
+        self.sw_middle = self._switch_row(grid, 2, "Clique do meio",
+                                          "Clique no centro do mouse funciona como botão do meio")
+
+        lbl = Gtk.Label(label="Velocidade da rolagem", xalign=0, hexpand=True)
+        grid.attach(lbl, 0, 3, 2, 1)
+        speed_box = Gtk.Box(spacing=8)
+        speed_box.pack_start(Gtk.Label(label="Lenta"), False, False, 0)
+        self.scale_speed = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 0, 63, 1)
+        self.scale_speed.set_digits(0)
+        self.scale_speed.set_value_pos(Gtk.PositionType.TOP)
+        self.scale_speed.add_mark(32, Gtk.PositionType.BOTTOM, "padrão")
+        speed_box.pack_start(self.scale_speed, True, True, 0)
+        speed_box.pack_start(Gtk.Label(label="Rápida"), False, False, 0)
+        grid.attach(speed_box, 0, 4, 2, 1)
+
+        self.chk_persist = Gtk.CheckButton(label="Manter estas configurações após reiniciar")
+        grid.attach(self.chk_persist, 0, 5, 2, 1)
+        root.pack_start(cfg_frame, False, False, 0)
+
+        # --- Área de teste ---
+        test_frame = Gtk.Frame(label=" Área de teste — role aqui ")
+        sw = Gtk.ScrolledWindow(min_content_height=110, margin=6)
+        test_text = "\n".join(f"Linha {i} — deslize o dedo no mouse para testar a rolagem" + " ·" * 20
+                              for i in range(1, 101))
+        tv = Gtk.TextView(editable=False, cursor_visible=False, left_margin=6)
+        tv.get_buffer().set_text(test_text)
+        sw.add(tv)
+        test_frame.add(sw)
+        root.pack_start(test_frame, True, True, 0)
+
+        # --- Botões e mensagem ---
+        self.lbl_msg = Gtk.Label(xalign=0, wrap=True, selectable=True)
+        root.pack_start(self.lbl_msg, False, False, 0)
+
+        buttons = Gtk.Box(spacing=8)
+        btn_defaults = Gtk.Button(label="Restaurar padrões")
+        btn_defaults.connect("clicked", self.on_defaults)
+        buttons.pack_start(btn_defaults, False, False, 0)
+        self.btn_apply = Gtk.Button(label="Aplicar")
+        self.btn_apply.get_style_context().add_class("suggested-action")
+        self.btn_apply.connect("clicked", self.on_apply)
+        buttons.pack_end(self.btn_apply, False, False, 0)
+        btn_close = Gtk.Button(label="Fechar")
+        btn_close.connect("clicked", lambda *_: self.close())
+        buttons.pack_end(btn_close, False, False, 0)
+        root.pack_start(buttons, False, False, 0)
+
+        self.load_settings()
+        self.refresh_status()
+        GLib.timeout_add_seconds(5, self.refresh_status)
+
+    @staticmethod
+    def _switch_row(grid, row, title, subtitle):
+        lbl = Gtk.Label(xalign=0, hexpand=True)
+        lbl.set_markup(f"{GLib.markup_escape_text(title)}\n"
+                       f"<small><span alpha='65%'>{GLib.markup_escape_text(subtitle)}</span></small>")
+        sw = Gtk.Switch(valign=Gtk.Align.CENTER)
+        grid.attach(lbl, 0, row, 1, 1)
+        grid.attach(sw, 1, row, 1, 1)
+        return sw
+
+    def set_values(self, vals):
+        self.sw_scroll.set_active(vals["emulate_scroll_wheel"])
+        self.sw_accel.set_active(vals["scroll_acceleration"])
+        self.sw_middle.set_active(vals["emulate_3button"])
+        self.scale_speed.set_value(vals["scroll_speed"])
+
+    def load_settings(self):
+        vals = read_params()
+        if vals is None:
+            self.message("O driver hid_magicmouse não está carregado. Ligue o mouse e reabra.", error=True)
+            vals = DEFAULTS
+        self.set_values(vals)
+        self.chk_persist.set_active(os.path.exists(CONF))
+
+    def refresh_status(self):
+        mice = find_mice()
+        if mice:
+            name, mac = mice[0]
+            self.lbl_device.set_markup(f"<b>{GLib.markup_escape_text(name)}</b>  <small>{mac}</small>")
+            level = battery(mac)
+            if level is not None:
+                self.lbl_battery.set_text(f"Bateria: {level}%")
+                self.battery_bar.set_value(level)
+                self.battery_bar.show()
+            else:
+                self.lbl_battery.set_text("Bateria: indisponível")
+                self.battery_bar.hide()
+            self.btn_reconnect.set_sensitive(True)
+            self.mac = mac
+        else:
+            self.lbl_device.set_markup("<b>Nenhum Magic Mouse conectado</b>")
+            self.lbl_battery.set_text("Ligue o mouse ou conecte-o pelo Bluetooth.")
+            self.battery_bar.hide()
+            self.btn_reconnect.set_sensitive(False)
+            self.mac = None
+        return True  # mantém o timer ativo
+
+    def message(self, text, error=False):
+        color = "#c01c28" if error else "#2a7a2a"
+        self.lbl_msg.set_markup(f"<span foreground='{color}'>{GLib.markup_escape_text(text)}</span>")
+
+    def on_defaults(self, _btn):
+        self.set_values(DEFAULTS)
+        self.message("Valores padrão carregados. Clique em Aplicar para salvar.")
+
+    def on_apply(self, _btn):
+        if not os.path.exists(HELPER):
+            self.message("O auxiliar não está instalado. Rode: sudo ~/projetos/magicmouse-config/install.sh", error=True)
+            return
+        b = lambda w: "1" if w.get_active() else "0"  # noqa: E731
+        cmd = ["pkexec", HELPER, b(self.sw_middle), b(self.sw_scroll),
+               str(int(self.scale_speed.get_value())), b(self.sw_accel), b(self.chk_persist)]
+        self.btn_apply.set_sensitive(False)
+        self.message("Aplicando…")
+        run_async(cmd, self._apply_done)
+
+    def _apply_done(self, rc, out):
+        self.btn_apply.set_sensitive(True)
+        if rc == 0:
+            extra = " e salvas permanentemente" if self.chk_persist.get_active() else " (somente até reiniciar)"
+            self.message("Configurações aplicadas" + extra + ".")
+            self.load_settings()
+        elif rc in (126, 127):
+            self.message("Autenticação cancelada.", error=True)
+        else:
+            self.message(f"Falha ao aplicar: {out or rc}", error=True)
+
+    def on_reconnect(self, _btn):
+        if not self.mac:
+            return
+        self.btn_reconnect.set_sensitive(False)
+        self.message("Reconectando o mouse…")
+        mac = self.mac
+        cmd = ["sh", "-c", f"bluetoothctl disconnect {mac}; sleep 2; bluetoothctl connect {mac}"]
+        run_async(cmd, self._reconnect_done)
+
+    def _reconnect_done(self, rc, out):
+        self.btn_reconnect.set_sensitive(True)
+        GLib.timeout_add_seconds(2, lambda: (self.refresh_status(), False)[1])
+        if rc == 0:
+            self.message("Mouse reconectado.")
+        else:
+            self.message(f"Falha ao reconectar: {out}", error=True)
+
+
+def main():
+    win = MagicMouseWindow()
+    win.connect("destroy", Gtk.main_quit)
+    win.show_all()
+    win.refresh_status()  # reaplica hide() da barra de bateria após show_all
+    Gtk.main()
+
+
+if __name__ == "__main__":
+    main()

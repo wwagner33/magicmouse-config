@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE policyconfig PUBLIC
+ "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN"
+ "http://www.freedesktop.org/standards/PolicyKit/1/policyconfig.dtd">
+<policyconfig>
+  <action id="org.local.magicmouse-config.apply">
+    <description>Apply Magic Mouse settings</description>
+    <description xml:lang="pt_BR">Aplicar configurações do Magic Mouse</description>
+    <message>Authentication is required to change Magic Mouse settings</message>
+    <message xml:lang="pt_BR">É necessária autenticação para alterar as configurações do Magic Mouse</message>
+    <icon_name>input-mouse</icon_name>
+    <defaults>
+      <allow_any>auth_admin</allow_any>
+      <allow_inactive>auth_admin</allow_inactive>
+      <allow_active>auth_admin_keep</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/local/libexec/magicmouse-helper</annotate>
+  </action>
+</policyconfig>

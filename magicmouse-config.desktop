@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Magic Mouse
+Name[pt_BR]=Magic Mouse
+Comment=Configure scrolling and gestures of the Apple Magic Mouse
+Comment[pt_BR]=Configurar rolagem e gestos do Apple Magic Mouse
+Exec=magicmouse-config
+Icon=input-mouse
+Terminal=false
+Categories=Settings;HardwareSettings;X-XFCE-SettingsDialog;X-XFCE-HardwareSettings;
+Keywords=mouse;apple;magic;scroll;rolagem;
